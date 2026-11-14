@@ -1,0 +1,15 @@
+[project]
+name = "automas-release-ota"
+version = "0.1.0"
+description = "AUTO-MAS 官方发行包增量生成与下载站发布"
+requires-python = ">=3.12"
+dependencies = ["httpx==0.28.1"]
+
+[dependency-groups]
+dev = ["ruff==0.14.1"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.uv]
+package = false

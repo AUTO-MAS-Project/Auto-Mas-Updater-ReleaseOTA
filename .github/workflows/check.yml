@@ -1,0 +1,26 @@
+name: 生成与上传契约检查
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install uv==0.13.7
+      - run: uv sync --locked --group dev
+      - run: uv run --no-sync ruff check src tests
+      - run: uv run --no-sync ruff format --check src tests
+      - run: uv run --no-sync python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: src
