@@ -1,10 +1,12 @@
 """只允许 MaaEnd/ReleaseOTA，覆盖首次创建、版本更新与公开回读。"""
 
+import io
 import json
 import os
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +18,32 @@ URL = publisher.BASE + "/api/v1/files/maaend/ReleaseOTA/maaend-x64-beta-delta/do
 
 
 class DestinationTests(unittest.TestCase):
+    def test_official_chunk_client_receives_scoped_id_and_secret_only_in_environment(
+        self,
+    ):
+        with (
+            patch.object(
+                publisher.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess(
+                    [], 0, stdout="uploaded", stderr=""
+                ),
+            ) as run,
+            tempfile.TemporaryDirectory() as directory,
+        ):
+            source = Path(directory) / "maaend.delta.zip"
+            source.write_bytes(b"ZIP")
+            publisher.upload_chunks(42, "test-key", source)
+            command = run.call_args.args[0]
+            self.assertEqual(command[command.index("--file-id") + 1], "42")
+            self.assertEqual(command[command.index("--chunk-mb") + 1], "8")
+            self.assertEqual(
+                command[command.index("--endpoint") + 1],
+                publisher.UPLOAD_BASE + "/api/v1/uploads/",
+            )
+            self.assertNotIn("test-key", " ".join(command))
+            self.assertEqual(run.call_args.kwargs["env"]["AUTOMAS_TOKEN"], "test-key")
+
     def test_only_four_scoped_public_destinations_are_accepted(self):
         with patch.dict(os.environ, {"AUTOMAS_TOKEN": "test-key"}):
             for key in publisher.FILE_KEYS:
@@ -101,13 +129,26 @@ class PublishTests(unittest.IsolatedAsyncioTestCase):
             original = httpx.AsyncClient
             with tempfile.TemporaryDirectory() as directory:
                 source = Path(directory) / "maaend.delta.zip"
-                source.write_bytes(b"verified ZIP")
+                with zipfile.ZipFile(source, "w") as archive:
+                    archive.writestr(
+                        "manifest.json",
+                        json.dumps(
+                            {
+                                "version": 2,
+                                "plans": {"old": [1]},
+                                "bases": ["old"],
+                                "beta_base": "old",
+                            }
+                        ),
+                    )
+                    archive.writestr("payload", b"verified ZIP")
                 with (
                     patch.object(publisher, "target", return_value=(URL, "test-key")),
                     patch.object(
                         publisher, "matches", new=AsyncMock(side_effect=[False, True])
                     ),
                     patch.object(publisher, "upload", return_value=result) as upload,
+                    patch.object(publisher, "upload_chunks") as chunks,
                     patch.object(
                         httpx,
                         "AsyncClient",
@@ -117,12 +158,20 @@ class PublishTests(unittest.IsolatedAsyncioTestCase):
                     ),
                 ):
                     await publisher.publish(source)
-                    upload.assert_called_once_with(
-                        42 if existing else None,
-                        "test-key",
-                        b"verified ZIP",
-                        filename="maaend-x64-beta-delta.zip",
-                    )
+                    chunks.assert_called_once_with(42, "test-key", source)
+                    if existing:
+                        upload.assert_not_called()
+                    else:
+                        upload.assert_called_once()
+                        self.assertEqual(upload.call_args.args[:2], (None, "test-key"))
+                        with zipfile.ZipFile(
+                            io.BytesIO(upload.call_args.args[2])
+                        ) as archive:
+                            metadata = json.loads(archive.read("manifest.json"))
+                            self.assertEqual(metadata["plans"], {})
+                            self.assertEqual(metadata["bases"], [])
+                            self.assertIsNone(metadata["beta_base"])
+                            self.assertEqual(archive.read("payload"), b"")
 
     async def test_wrong_public_category_prevents_any_upload(self):
         record = {
@@ -139,6 +188,7 @@ class PublishTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(publisher, "target", return_value=(URL, "test-key")),
                 patch.object(publisher, "matches", new=AsyncMock(return_value=False)),
                 patch.object(publisher, "upload") as upload,
+                patch.object(publisher, "upload_chunks") as chunks,
                 patch.object(
                     httpx,
                     "AsyncClient",
@@ -155,3 +205,4 @@ class PublishTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(publisher.PublishError):
                     await publisher.publish(source)
                 upload.assert_not_called()
+                chunks.assert_not_called()

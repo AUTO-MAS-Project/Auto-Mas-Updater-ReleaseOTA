@@ -2,10 +2,13 @@
 
 import asyncio
 import hashlib
+import io
 import json
 import os
 import subprocess
+import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from urllib.parse import quote, urljoin, urlsplit
 
@@ -15,6 +18,9 @@ BASE = "https://data.auto-mas.top"
 UPLOAD_BASE = "https://data2.auto-mas.top"
 MAX_BYTES = 32 * 1024 * 1024
 UPLOAD_TIMEOUT = 300
+OFFICIAL_UPLOADER_SHA256 = (
+    "efdea951f5ffde31e33218ad2f9c98311be0f100d7bbe5db3c64ebac39a251c3"
+)
 
 
 FILE_KEYS = frozenset(
@@ -29,6 +35,62 @@ PUBLIC_PATHS = frozenset(
 
 class PublishError(ValueError):
     pass
+
+
+def bootstrap(content: bytes) -> bytes:
+    """TUS 仅能更新已有文件，先用小的无可用计划 ZIP 建立目标，客户端此时全量。"""
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        info = archive.getinfo("manifest.json")
+        if info.file_size > 512 * 1024:
+            raise PublishError("增量清单过大")
+        metadata = json.loads(archive.read(info))
+    metadata.update(plans={}, bases=[], beta_base=None)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps(metadata))
+        archive.writestr("payload", b"")
+    if output.tell() > 32 * 1024:
+        raise PublishError("初始化包过大")
+    return output.getvalue()
+
+
+def upload_chunks(file_id: int, token: str, source: Path) -> None:
+    """复用下载站公开分发的官方 TUS 客户端，8 MiB 分片、断点续传和服务端 SHA256。"""
+    tool = Path(__file__).resolve().parents[2] / "tools" / "file_update.sh"
+    if hashlib.sha256(tool.read_bytes()).hexdigest() != OFFICIAL_UPLOADER_SHA256:
+        raise PublishError("官方上传工具 SHA256 不匹配")
+    bash = shutil.which("bash")
+    if os.name == "nt" and (git := shutil.which("git")):
+        git_bash = Path(git).parent.parent / "bin" / "bash.exe"
+        if git_bash.is_file():
+            bash = str(git_bash)
+    if not bash:
+        raise PublishError("分片上传需要 bash（Windows 使用 Git Bash）")
+    result = subprocess.run(
+        [
+            bash,
+            str(tool),
+            str(source.resolve()),
+            "--file-id",
+            str(file_id),
+            "--endpoint",
+            UPLOAD_BASE + "/api/v1/uploads/",
+            "--chunk-mb",
+            "8",
+            "--retries",
+            "3",
+            "--change-note",
+            f"GitHub Actions run {os.environ.get('GITHUB_RUN_ID', 'manual')}",
+        ],
+        env={**os.environ, "AUTOMAS_TOKEN": token},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).replace(token, "[REDACTED]")[-1800:]
+        raise PublishError(f"官方分片上传失败：{detail}")
+    print(result.stdout.replace(token, "[REDACTED]").strip())
 
 
 def target() -> tuple[str, str]:
@@ -221,10 +283,13 @@ async def publish(source: Path) -> None:
             ):
                 raise PublishError("公开目标不属于 MaaEnd ReleaseOTA")
             file_id = actual["id"]
-        data = await asyncio.to_thread(
-            upload, file_id, token, content, filename=filename
-        )
-        if data is not None:
+        if file_id is None:
+            # TUS 不支持新建文件；小的空计划先建立记录，期间客户端安全全量。
+            data = await asyncio.to_thread(
+                upload, None, token, bootstrap(content), filename=filename
+            )
+            if not isinstance(data, dict) or type(data.get("id")) is not int:
+                raise PublishError("初始化目标未确认成功，请检查公开文件后重跑")
             keys = [
                 data.get(key) for key in ("project_key", "category_key", "file_key")
             ]
@@ -246,6 +311,8 @@ async def publish(source: Path) -> None:
                 or data.get("published_version_no") != version["version_no"]
             ):
                 raise PublishError("增量包已上传但尚未发布，请使用有发布权限的账号凭证")
+            file_id = data["id"]
+        await asyncio.to_thread(upload_chunks, file_id, token, source)
         for attempt in range(6):
             if await matches(client, public_url, expected):
                 print(f"下载站公开内容校验通过：{public_url}")

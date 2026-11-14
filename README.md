@@ -39,7 +39,11 @@ GitHub 不支持区间、超时、
 发布器固定只接受 `maaend / ReleaseOTA` 下上述四个文件键，首次上传自动创建目标文件，
 后续通过公开元数据确认项目、分类、文件键和 ID 后上传新版本，不接受任意文件 ID 覆写。
 密钥须限制为 MaaEnd 项目的 ReleaseOTA 分类；不会读取、创建或上传到其他分类。
-上传沿用 Copilot-Data 的 curl multipart、双入口受限跳转、发布状态核对及公开 SHA256 回读。
+首次创建使用小于 32 KiB 的空计划 ZIP，通过 curl multipart 建立文件记录；这段时间客户端全量。
+实际增量包和后续版本复用下载站官方 `file_update.sh`，通过 TUS 每片 8 MiB 上传，
+失败按服务器偏移续传，避免整包单次请求触发 Cloudflare 524。服务端验证 SHA256，
+发布器还必须从公开下载地址重新读取整个增量包并验证 SHA256，才报告成功。
+官方上传工具固定版本随仓库保存，并校验其 SHA256；凭证通过环境传递，不写入参数或源码。
 
 主程序协议实现：[AUTO-MAS #1985](https://github.com/AUTO-MAS-Project/AUTO-MAS/pull/1985)（已合并）；
 下载地址迁移：[AUTO-MAS #1992](https://github.com/AUTO-MAS-Project/AUTO-MAS/pull/1992)。
@@ -47,10 +51,11 @@ GitHub 不支持区间、超时、
 
 ## 迁移验收
 
-- 本地生成、三基准合并与上传边界共 7 项测试通过，GitHub 自动检查通过。
+- 本地生成、三基准合并与上传边界共 8 项测试通过。
 - [首次真实制包与上传](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43601819918)
   完成官方整包校验和增量重建验证，x64 beta 产物为 15,277,016 字节，Actions artifact 已保留。
 - [延长上传时限后的复核](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43602071959)
   显示文件已完整发送，但下载站源站返回 HTTP 524；本机对同一包的独立上传也复现该错误。
   尚未确认公开发布，不能把制包成功当成站点上线。
-- 上传失败不自动重复 POST；修复下载站问题后可重跑，发布器先做公开摘要去重，成功必须公开回读一致。
+- 原先整包 multipart 的超时不能靠延长客户端等待解决；现改用站点官方 TUS 工具。
+  首次创建失败不自动重复 POST，分片允许受控重试；重跑先做公开摘要去重。
