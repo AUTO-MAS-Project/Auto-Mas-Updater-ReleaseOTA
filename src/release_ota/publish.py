@@ -14,6 +14,7 @@ import httpx
 BASE = "https://data.auto-mas.top"
 UPLOAD_BASE = "https://data2.auto-mas.top"
 MAX_BYTES = 32 * 1024 * 1024
+UPLOAD_TIMEOUT = 300
 
 
 FILE_KEYS = frozenset(
@@ -91,7 +92,7 @@ def upload(
                 "--proto",
                 "=https",
                 "--max-time",
-                "60",
+                str(UPLOAD_TIMEOUT),
                 "--max-filesize",
                 str(MAX_BYTES),
                 "--request",
@@ -111,7 +112,7 @@ def upload(
                 "--output",
                 str(response),
                 "--write-out",
-                "%{http_code}",
+                "%{http_code} %{size_upload}",
                 url,
             ]
             if file_id is None:
@@ -134,12 +135,13 @@ def upload(
                     input=config,
                     text=True,
                     capture_output=True,
-                    timeout=65,
+                    timeout=UPLOAD_TIMEOUT + 5,
                     check=False,
                 )
             except subprocess.TimeoutExpired:
                 raise PublishError("下载站上传超时，未自动重试") from None
-            status = int(result.stdout) if result.stdout.isdecimal() else 0
+            metrics = result.stdout.split()
+            status = int(metrics[0]) if metrics and metrics[0].isdecimal() else 0
             if status in {307, 308}:
                 location = next(
                     (
@@ -172,7 +174,7 @@ def upload(
                 return None  # 仅随后公开回读一致才将重复内容视为成功。
             if result.returncode or not 200 <= status < 300:
                 raise PublishError(
-                    f"下载站上传失败（curl {result.returncode}，HTTP {status}）"
+                    f"下载站上传失败（curl {result.returncode}，HTTP {status}，已发送 {metrics[1] if len(metrics) > 1 and metrics[1].isdecimal() else '未知'} 字节）"
                 )
             if response.stat().st_size > MAX_BYTES:
                 raise PublishError("上传响应过大")
