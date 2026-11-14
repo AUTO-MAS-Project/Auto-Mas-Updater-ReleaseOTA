@@ -108,13 +108,13 @@ class PublishTests(unittest.IsolatedAsyncioTestCase):
     async def test_public_identity_is_checked_before_upload_and_success_readback(self):
         for existing in (True, False):
             record = {
-                "id": 42,
                 "project_key": "maaend",
                 "category_key": "ReleaseOTA",
                 "file_key": "maaend-x64-beta-delta",
             }
             result = {
                 **record,
+                "id": 42,
                 "published_version_no": 2,
                 "version": {"version_no": 2, "review_status": "approved"},
             }
@@ -143,6 +143,10 @@ class PublishTests(unittest.IsolatedAsyncioTestCase):
                     )
                     archive.writestr("payload", b"verified ZIP")
                 with (
+                    patch.dict(
+                        os.environ,
+                        {"AUTOMAS_FILE_IDS": json.dumps({"maaend-x64-beta-delta": 42})},
+                    ),
                     patch.object(publisher, "target", return_value=(URL, "test-key")),
                     patch.object(
                         publisher, "matches", new=AsyncMock(side_effect=[False, True])

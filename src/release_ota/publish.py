@@ -263,7 +263,7 @@ async def publish(source: Path) -> None:
         if await matches(client, public_url, expected):
             print("公开下载内容一致，无须重复上传")
             return
-        # 公开元数据定位 ID，不接受工作流任意指定数字 ID，防止更新到其他分类。
+        # 公开详情不返回数字 ID；复用创建时保存的仓库变量，先校对公开路径归属。
         response = await client.get(
             public_url.removesuffix("/download"), follow_redirects=True
         )
@@ -279,10 +279,18 @@ async def publish(source: Path) -> None:
                 actual.get("project_key") != "maaend"
                 or actual.get("category_key") != "ReleaseOTA"
                 or actual.get("file_key") != filename.removesuffix(".zip")
-                or not isinstance(actual.get("id"), int)
             ):
                 raise PublishError("公开目标不属于 MaaEnd ReleaseOTA")
-            file_id = actual["id"]
+            identifiers = json.loads(os.environ.get("AUTOMAS_FILE_IDS", "{}") or "{}")
+            file_id = (
+                identifiers.get(filename.removesuffix(".zip"))
+                if isinstance(identifiers, dict)
+                else None
+            )
+            if type(file_id) is not int or file_id < 1:
+                raise PublishError(
+                    "请将首次创建返回的文件 ID 配置到 MAAEND_RELEASEOTA_FILE_IDS 仓库变量"
+                )
         if file_id is None:
             # TUS 不支持新建文件；小的空计划先建立记录，期间客户端安全全量。
             data = await asyncio.to_thread(
@@ -312,6 +320,14 @@ async def publish(source: Path) -> None:
             ):
                 raise PublishError("增量包已上传但尚未发布，请使用有发布权限的账号凭证")
             file_id = data["id"]
+            print(
+                f"首次创建文件：{filename.removesuffix('.zip')} = {file_id}；请保存到 MAAEND_RELEASEOTA_FILE_IDS 仓库变量"
+            )
+            if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+                with open(summary, "a", encoding="utf-8") as stream:
+                    stream.write(
+                        f"\n首次创建文件 ID（后续更新需保存至 `MAAEND_RELEASEOTA_FILE_IDS` 仓库变量）：`{filename.removesuffix('.zip')}: {file_id}`\n"
+                    )
         await asyncio.to_thread(upload_chunks, file_id, token, source)
         for attempt in range(6):
             if await matches(client, public_url, expected):

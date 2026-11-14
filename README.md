@@ -37,7 +37,11 @@ GitHub 不支持区间、超时、
 
 只需在本仓库 Actions Secret 配置 `AUTOMAS_MAAEND_DELTA_TOKEN`。
 发布器固定只接受 `maaend / ReleaseOTA` 下上述四个文件键，首次上传自动创建目标文件，
-后续通过公开元数据确认项目、分类、文件键和 ID 后上传新版本，不接受任意文件 ID 覆写。
+后续通过公开元数据确认项目、分类、文件键后上传新版本。
+站点公开接口不提供数字 ID，首次创建会在日志及步骤摘要中输出 ID；
+将它保存到仓库变量 `MAAEND_RELEASEOTA_FILE_IDS` 的 JSON 映射，例如
+`{"maaend-x64-beta-delta":116}`，后续新增通道时保留已有项并加入新项。
+该变量只应由仓库维护者根据创建响应配置；服务端仍按访问密钥检查分类权限。
 密钥须限制为 MaaEnd 项目的 ReleaseOTA 分类；不会读取、创建或上传到其他分类。
 首次创建使用小于 32 KiB 的空计划 ZIP，通过 curl multipart 建立文件记录；这段时间客户端全量。
 实际增量包和后续版本复用下载站官方 `file_update.sh`，通过 TUS 每片 8 MiB 上传，
@@ -56,6 +60,10 @@ GitHub 不支持区间、超时、
   完成官方整包校验和增量重建验证，x64 beta 产物为 15,277,016 字节，Actions artifact 已保留。
 - [延长上传时限后的复核](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43602071959)
   显示文件已完整发送，但下载站源站返回 HTTP 524；本机对同一包的独立上传也复现该错误。
-  尚未确认公开发布，不能把制包成功当成站点上线。
+  当时尚未公开发布。
+- [改用官方 TUS 后的真实发布](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43604645518)
+  已成功：`v3.1.0 → v3.1.0-rc.1` x64 beta，15,277,016 字节，文件 ID 116、公开版本 v2。
+  Actions 和本机独立公开回读均验证 SHA256 为
+  `83a92254a305745e80dc073e598298aff087a7543d53983c57ab77e5d90cf494`。
 - 原先整包 multipart 的超时不能靠延长客户端等待解决；现改用站点官方 TUS 工具。
   首次创建失败不自动重复 POST，分片允许受控重试；重跑先做公开摘要去重。

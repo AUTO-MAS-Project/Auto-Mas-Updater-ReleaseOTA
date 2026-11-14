@@ -59,6 +59,7 @@ jobs:
       - name: 上传独立增量文件并回读校验
         env:
           AUTOMAS_TOKEN: ${{ secrets.AUTOMAS_MAAEND_DELTA_TOKEN }}
+          AUTOMAS_FILE_IDS: ${{ vars.MAAEND_RELEASEOTA_FILE_IDS }}
           AUTOMAS_PUBLIC_URL: https://data.auto-mas.top/api/v1/files/maaend/ReleaseOTA/maaend-${{ inputs.arch }}-${{ inputs.channel }}-delta/download
           PYTHONPATH: src
         run: >-
