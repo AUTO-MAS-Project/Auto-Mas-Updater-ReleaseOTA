@@ -43,3 +43,12 @@ GitHub 不支持区间、超时、
 
 主程序配套 PR：[AUTO-MAS #1985](https://github.com/AUTO-MAS-Project/AUTO-MAS/pull/1985)。
 完整客户端说明：[MaaEnd 双路径增量更新](https://github.com/youngslin/AUTO-MAS/blob/feat/maaend-multi-base-delta/docs/maaend-incremental-update.md)。
+
+## 迁移验收
+
+- 本地生成、三基准合并与上传边界共 7 项测试通过，GitHub 自动检查通过。
+- [首次真实制包与上传](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43601819918)
+  完成官方整包校验和增量重建验证，x64 beta 产物为 15,277,016 字节，Actions artifact 已保留。
+- [延长上传时限后的复核](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43602071959)
+  显示文件已完整发送，但下载站源站返回 HTTP 524；尚未确认公开发布，不能把制包成功当成站点上线。
+- 上传失败不自动重复 POST；修复下载站问题后可重跑，发布器先做公开摘要去重，成功必须公开回读一致。
