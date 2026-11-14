@@ -1,6 +1,9 @@
 name: 生成 MaaEnd 增量包并上传下载站
 
 on:
+  schedule:
+    # UTC 19:25 / 07:25 = 北京时间每天 03:25 / 15:25。
+    - cron: '25 7,19 * * *'
   workflow_dispatch:
     inputs:
       target_tag:
@@ -17,19 +20,27 @@ on:
         type: choice
         default: stable
         options: [stable, beta]
+      force:
+        description: 已发布清单相同时仍重新制包
+        type: boolean
+        default: false
 
 permissions:
   contents: read
-
-concurrency:
-  group: maaend-delta-${{ inputs.arch }}-${{ inputs.channel }}
-  cancel-in-progress: false
 
 jobs:
   publish:
     if: github.repository == 'AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ github.event_name == 'schedule' && fromJSON('["x64","arm64"]') || fromJSON(format('["{0}"]', inputs.arch)) }}
+        channel: ${{ github.event_name == 'schedule' && fromJSON('["stable","beta"]') || fromJSON(format('["{0}"]', inputs.channel)) }}
+    concurrency:
+      group: maaend-delta-${{ matrix.arch }}-${{ matrix.channel }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,29 +49,46 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - name: 下载官方包并生成、校验增量
+      - name: 安装发布工具依赖
+        run: python -m pip install httpx==0.28.1
+      - name: 检查 GitHub 发行包与下载站覆盖范围
+        id: poll
         env:
-          CHANNEL: ${{ inputs.channel }}
+          CHANNEL: ${{ matrix.channel }}
           TARGET_TAG: ${{ inputs.target_tag }}
-          ARCH: ${{ inputs.arch == 'x64' && 'x86_64' || 'aarch64' }}
+          ARCH: ${{ matrix.arch == 'x64' && 'x86_64' || 'aarch64' }}
+          FORCE: ${{ inputs.force }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PYTHONPATH: src
+        shell: bash
+        run: |
+          extra=()
+          if [[ "$FORCE" == 'true' ]]; then extra+=(--force); fi
+          python -m release_ota.poll --channel "$CHANNEL" --target-tag "$TARGET_TAG" --arch "$ARCH" "${extra[@]}"
+      - name: 下载官方包并生成、校验增量
+        if: steps.poll.outputs.needed == 'true'
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          TARGET_TAG: ${{ steps.poll.outputs.tag }}
+          ARCH: ${{ matrix.arch == 'x64' && 'x86_64' || 'aarch64' }}
           GITHUB_TOKEN: ${{ github.token }}
           PYTHONPATH: src
         run: >-
           python -m release_ota.maaend_delta --channel "$CHANNEL"
           --target-tag "$TARGET_TAG" --arch "$ARCH" --output .delta-output
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.poll.outputs.needed == 'true'
         with:
-          name: maaend-${{ inputs.arch }}-${{ inputs.channel }}-delta
+          name: maaend-${{ matrix.arch }}-${{ matrix.channel }}-delta
           path: .delta-output/maaend.delta.zip
           if-no-files-found: error
           retention-days: 7
-      - name: 安装发布工具依赖
-        run: python -m pip install httpx==0.28.1
       - name: 上传独立增量文件并回读校验
+        if: steps.poll.outputs.needed == 'true'
         env:
           AUTOMAS_TOKEN: ${{ secrets.AUTOMAS_MAAEND_DELTA_TOKEN }}
           AUTOMAS_FILE_IDS: ${{ vars.MAAEND_RELEASEOTA_FILE_IDS }}
-          AUTOMAS_PUBLIC_URL: https://data.auto-mas.top/api/v1/files/maaend/ReleaseOTA/maaend-${{ inputs.arch }}-${{ inputs.channel }}-delta/download
+          AUTOMAS_PUBLIC_URL: https://data.auto-mas.top/api/v1/files/maaend/ReleaseOTA/maaend-${{ matrix.arch }}-${{ matrix.channel }}-delta/download
           PYTHONPATH: src
         run: >-
           python -c "import asyncio; from pathlib import Path;

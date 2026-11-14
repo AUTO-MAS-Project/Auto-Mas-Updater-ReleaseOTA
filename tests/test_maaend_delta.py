@@ -1,6 +1,8 @@
 """生成器与字节重建契约；不下载或运行 MaaEnd。"""
 
 import hashlib
+import io
+import json
 import random
 import tempfile
 import threading
@@ -10,9 +12,58 @@ from pathlib import Path
 
 from release_ota.zip_delta import apply_patch, create_patch, create_bundle
 from release_ota.maaend_delta import select_bases
+from release_ota.poll import expected_policy, up_to_date
 
 
 class MaaEndDeltaTests(unittest.TestCase):
+    def test_poll_keeps_stable_and_beta_coverage_and_detects_changed_baselines(self):
+        releases = [
+            {
+                "tag_name": "v" + tag,
+                "prerelease": "beta" in tag,
+                "assets": [
+                    {
+                        "name": f"MaaEnd-win-x86_64-v{tag}.zip",
+                        "state": "uploaded",
+                        "size": 100,
+                        "digest": "sha256:" + str(number) * 64,
+                    }
+                ],
+            }
+            for number, tag in enumerate(
+                ("2.7.0", "2.8.0", "2.9.0", "3.0.0", "3.1.0", "3.1.0-beta.8"), 1
+            )
+        ]
+        stable, stable_digests = expected_policy(releases, "stable", "x86_64")
+        beta, beta_digests = expected_policy(releases, "beta", "x86_64")
+        self.assertEqual(stable["target_version"], "v3.1.0")
+        self.assertEqual(stable["bases"], ["v3.0.0", "v2.9.0", "v2.8.0"])
+        self.assertEqual(beta["bases"], ["v3.1.0"])
+        self.assertEqual(beta["target_version"], "v3.1.0-beta.8")
+
+        def published(policy, digests):
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, "w") as archive:
+                archive.writestr(
+                    "manifest.json",
+                    json.dumps({**policy, "plans": dict.fromkeys(digests, [])}),
+                )
+            return output.getvalue()
+
+        for policy, digests in ((stable, stable_digests), (beta, beta_digests)):
+            self.assertTrue(up_to_date(published(policy, digests), policy, digests))
+            self.assertFalse(up_to_date(published(policy, set()), policy, digests))
+        self.assertFalse(
+            up_to_date(published(beta, beta_digests), stable, stable_digests)
+        )
+        old_beta = published(beta, beta_digests)
+        releases[4]["assets"][0]["digest"] = "sha256:" + "a" * 64
+        changed, changed_digests = expected_policy(releases, "beta", "x86_64")
+        self.assertFalse(up_to_date(old_beta, changed, changed_digests))
+        releases[4]["assets"][0]["state"] = "new"
+        with self.assertRaises(ValueError):
+            expected_policy(releases, "beta", "x86_64")
+
     def test_version_window_and_same_number_beta_anchor(self):
         releases = [
             {"tag_name": "v" + tag}
