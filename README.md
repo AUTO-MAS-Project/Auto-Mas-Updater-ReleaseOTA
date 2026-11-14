@@ -41,8 +41,9 @@ GitHub 不支持区间、超时、
 密钥须限制为 MaaEnd 项目的 ReleaseOTA 分类；不会读取、创建或上传到其他分类。
 上传沿用 Copilot-Data 的 curl multipart、双入口受限跳转、发布状态核对及公开 SHA256 回读。
 
-主程序配套 PR：[AUTO-MAS #1985](https://github.com/AUTO-MAS-Project/AUTO-MAS/pull/1985)。
-完整客户端说明：[MaaEnd 双路径增量更新](https://github.com/youngslin/AUTO-MAS/blob/feat/maaend-multi-base-delta/docs/maaend-incremental-update.md)。
+主程序协议实现：[AUTO-MAS #1985](https://github.com/AUTO-MAS-Project/AUTO-MAS/pull/1985)（已合并）；
+下载地址迁移：[AUTO-MAS #1992](https://github.com/AUTO-MAS-Project/AUTO-MAS/pull/1992)。
+完整客户端说明：[MaaEnd 双路径增量更新](https://github.com/youngslin/AUTO-MAS/blob/fix/maaend-releaseota-repository/docs/maaend-incremental-update.md)。
 
 ## 迁移验收
 
@@ -50,5 +51,6 @@ GitHub 不支持区间、超时、
 - [首次真实制包与上传](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43601819918)
   完成官方整包校验和增量重建验证，x64 beta 产物为 15,277,016 字节，Actions artifact 已保留。
 - [延长上传时限后的复核](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43602071959)
-  显示文件已完整发送，但下载站源站返回 HTTP 524；尚未确认公开发布，不能把制包成功当成站点上线。
+  显示文件已完整发送，但下载站源站返回 HTTP 524；本机对同一包的独立上传也复现该错误。
+  尚未确认公开发布，不能把制包成功当成站点上线。
 - 上传失败不自动重复 POST；修复下载站问题后可重跑，发布器先做公开摘要去重，成功必须公开回读一致。
