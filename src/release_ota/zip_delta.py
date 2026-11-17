@@ -13,6 +13,10 @@ from typing import BinaryIO
 MAX_PATCH_BYTES = 32 * 1024**2
 
 
+class DeltaNotUseful(ValueError):
+    """已验证的官方包之间无法生成符合大小限制的增量。"""
+
+
 def file_digest(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -88,8 +92,11 @@ def create_patch(baseline: Path, target: Path, patch: Path) -> None:
             info.compress_type = zipfile.ZIP_DEFLATED
             output.writestr(info, json.dumps(manifest))
     if patch.stat().st_size >= min(MAX_PATCH_BYTES, target.stat().st_size):
+        size = patch.stat().st_size
         patch.unlink()
-        raise ValueError("增量包未节省流量或超过发布限制，使用全量")
+        raise DeltaNotUseful(
+            f"增量包 {size} 字节未节省流量或超过发布限制，使用全量（上限 {min(MAX_PATCH_BYTES, target.stat().st_size)} 字节）"
+        )
 
 
 def apply_patch(
@@ -164,6 +171,21 @@ def apply_patch(
 def create_bundle(
     baselines: list[Path], target: Path, patch: Path, policy: dict
 ) -> None:
+    """大小不合算时发布空计划；其他生成、校验异常仍向上传播。"""
+    try:
+        _create_bundle(baselines, target, patch, policy)
+    except DeltaNotUseful as error:
+        fallback = {
+            "reason": "delta-size-limit",
+            "base_sha256": sorted({file_digest(path) for path in baselines}),
+        }
+        _create_bundle([], target, patch, {**policy, "full_download": fallback})
+        print(f"{error}；发布全量回退清单")
+
+
+def _create_bundle(
+    baselines: list[Path], target: Path, patch: Path, policy: dict
+) -> None:
     """最多三个正式起点共享一份目标字节池；beta 只生成同号正式基准的累计包。"""
     plans = {}
     intervals = []
@@ -227,9 +249,12 @@ def create_bundle(
         info = zipfile.ZipInfo("manifest.json")
         info.compress_type = zipfile.ZIP_DEFLATED
         archive.writestr(info, document)
-    if patch.stat().st_size >= min(MAX_PATCH_BYTES, target.stat().st_size):
+    if baselines and patch.stat().st_size >= min(
+        MAX_PATCH_BYTES, target.stat().st_size
+    ):
+        size = patch.stat().st_size
         patch.unlink()
-        raise ValueError("多基线增量过大，使用全量")
+        raise DeltaNotUseful(f"多基线增量 {size} 字节超过发布限制，使用全量")
     with TemporaryDirectory() as scratch:
         for number, baseline in enumerate(baselines):
             apply_patch(

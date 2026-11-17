@@ -9,6 +9,9 @@ import threading
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
+
+from release_ota import zip_delta
 
 from release_ota.zip_delta import apply_patch, create_patch, create_bundle
 from release_ota.maaend_delta import select_bases
@@ -16,6 +19,101 @@ from release_ota.poll import expected_policy, up_to_date
 
 
 class MaaEndDeltaTests(unittest.TestCase):
+    def test_size_fallback_is_published_and_poll_tracks_all_official_digests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline, target, bundle = (
+                root / name for name in ("base.zip", "target.zip", "bundle.zip")
+            )
+            for number, path in enumerate((baseline, target)):
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr("data", random.Random(number).randbytes(8192))
+            policy = {
+                "version": 2,
+                "mode": "range-zip",
+                "bases": ["v1.0.0"],
+                "target_version": "v2.0.0",
+                "target_size": target.stat().st_size,
+                "target_sha256": zip_delta.file_digest(target),
+            }
+            # A small limit exercises the production 32 MiB boundary without large fixtures.
+            with patch.object(zip_delta, "MAX_PATCH_BYTES", 4096):
+                create_bundle([baseline], target, bundle, policy)
+            digests = {zip_delta.file_digest(baseline)}
+            with zipfile.ZipFile(bundle) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["plans"], {})
+                self.assertEqual(archive.read("payload"), b"")
+                self.assertEqual(
+                    manifest["full_download"]["base_sha256"], sorted(digests)
+                )
+            content = bundle.read_bytes()
+            self.assertTrue(up_to_date(content, policy, digests))
+            self.assertFalse(up_to_date(content, policy, {"f" * 64}))
+            self.assertFalse(
+                up_to_date(content, {**policy, "target_sha256": "a" * 64}, digests)
+            )
+            self.assertFalse(
+                up_to_date(content, {**policy, "bases": ["v1.1.0"]}, digests)
+            )
+            # Bootstrap placeholders must not be mistaken for a completed fallback.
+            with zipfile.ZipFile(bundle, "w") as archive:
+                manifest.pop("full_download")
+                archive.writestr("manifest.json", json.dumps(manifest))
+            self.assertFalse(up_to_date(bundle.read_bytes(), policy, digests))
+            with self.assertRaises((KeyError, ValueError)):
+                apply_patch(
+                    baseline,
+                    bundle,
+                    root / "out.zip",
+                    target.stat().st_size,
+                    zip_delta.file_digest(target),
+                    threading.Event(),
+                )
+
+    def test_merged_size_falls_back_after_individual_plans_fit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = [random.Random(i).randbytes(6000) for i in range(3)]
+            target, bundle = root / "target.zip", root / "bundle.zip"
+            with zipfile.ZipFile(target, "w") as archive:
+                for i, value in enumerate(data):
+                    archive.writestr(str(i), value)
+            sources = []
+            for i in (1, 2):
+                source = root / f"base-{i}.zip"
+                with zipfile.ZipFile(source, "w") as archive:
+                    for j, value in enumerate(data):
+                        if j != i:
+                            archive.writestr(str(j), value)
+                sources.append(source)
+            with patch.object(zip_delta, "MAX_PATCH_BYTES", 10000):
+                for i, source in enumerate(sources):
+                    create_patch(source, target, root / f"single-{i}.zip")
+                create_bundle(sources, target, bundle, {"bases": ["v1", "v2"]})
+            with zipfile.ZipFile(bundle) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["plans"], {})
+                self.assertEqual(len(manifest["full_download"]["base_sha256"]), 2)
+
+    def test_corruption_and_verification_failures_do_not_become_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline, target, bundle = (
+                root / name for name in ("base.zip", "target.zip", "bundle.zip")
+            )
+            baseline.write_bytes(b"corrupt")
+            with zipfile.ZipFile(target, "w") as archive:
+                archive.writestr("data", random.Random(1).randbytes(8192))
+            with self.assertRaises(zipfile.BadZipFile):
+                create_bundle([baseline], target, bundle, {})
+            baseline.write_bytes(target.read_bytes())
+            with patch.object(
+                zip_delta, "apply_patch", side_effect=ValueError("checksum mismatch")
+            ):
+                with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                    create_bundle([baseline], target, bundle, {})
+
     def test_poll_keeps_stable_and_beta_coverage_and_detects_changed_baselines(self):
         releases = [
             {

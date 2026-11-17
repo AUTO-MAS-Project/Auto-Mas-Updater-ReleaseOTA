@@ -73,11 +73,19 @@ def up_to_date(content: bytes, expected: dict, base_digests: set[str]) -> bool:
             if manifest.file_size > 512 * 1024:
                 return False
             policy = json.loads(archive.read(manifest))
+        if not isinstance(policy, dict):
+            return False
+        fallback = policy.get("full_download")
+        coverage_matches = (
+            policy.get("plans") == {}
+            and isinstance(fallback, dict)
+            and fallback.get("reason") == "delta-size-limit"
+            and fallback.get("base_sha256") == sorted(base_digests)
+        )
         return (
-            isinstance(policy, dict)
-            and all(policy.get(key) == value for key, value in expected.items())
+            all(policy.get(key) == value for key, value in expected.items())
             and isinstance(policy.get("plans"), dict)
-            and set(policy["plans"]) == base_digests
+            and (set(policy["plans"]) == base_digests or coverage_matches)
         )
     except (ValueError, KeyError, TypeError, zipfile.BadZipFile):
         return False
