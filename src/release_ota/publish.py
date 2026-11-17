@@ -28,6 +28,8 @@ FILE_KEYS = frozenset(
     for arch in ("x64", "arm64")
     for channel in ("stable", "beta")
 )
+# 已由首次创建响应确认的本仓库文件；仓库变量可覆盖或补充。
+DEFAULT_FILE_IDS = {"maaend-x64-beta-delta": 116, "maaend-arm64-beta-delta": 117}
 PUBLIC_PATHS = frozenset(
     f"/api/v1/files/maaend/ReleaseOTA/{key}/download" for key in FILE_KEYS
 )
@@ -283,7 +285,7 @@ async def publish(source: Path) -> None:
                 raise PublishError("公开目标不属于 MaaEnd ReleaseOTA")
             identifiers = json.loads(os.environ.get("AUTOMAS_FILE_IDS", "{}") or "{}")
             file_id = (
-                identifiers.get(filename.removesuffix(".zip"))
+                {**DEFAULT_FILE_IDS, **identifiers}.get(filename.removesuffix(".zip"))
                 if isinstance(identifiers, dict)
                 else None
             )

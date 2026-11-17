@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import zipfile
 from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -144,9 +145,18 @@ def main() -> None:
         }
         patch = args.output / "maaend.delta.zip"
         create_bundle(archives, target, patch, policy)
-        print(
-            f"{bases} -> {args.target_tag} ({args.arch}): {patch.stat().st_size} bytes; all plans verified"
+        with zipfile.ZipFile(patch) as archive:
+            metadata = json.loads(archive.read("manifest.json"))
+        status = (
+            "all plans verified"
+            if metadata["plans"]
+            else "full download (no delta plans)"
         )
+        message = f"{bases} -> {args.target_tag} ({args.arch}): {patch.stat().st_size} bytes; {status}"
+        print(message)
+        if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+            with open(summary, "a", encoding="utf-8") as stream:
+                stream.write(f"\n{message}\n")
 
 
 if __name__ == "__main__":
