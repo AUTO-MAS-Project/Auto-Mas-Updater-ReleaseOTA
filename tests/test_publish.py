@@ -177,47 +177,56 @@ class PublishTests(unittest.IsolatedAsyncioTestCase):
                             self.assertIsNone(metadata["beta_base"])
                             self.assertEqual(archive.read("payload"), b"")
 
-    async def test_arm64_uses_confirmed_id_when_legacy_variable_only_has_x64(self):
-        url = URL.replace("x64", "arm64")
-        record = {
-            "project_key": "maaend",
-            "category_key": "ReleaseOTA",
-            "file_key": "maaend-arm64-beta-delta",
-        }
+    async def test_existing_files_use_confirmed_ids_and_allow_overrides(self):
         original = httpx.AsyncClient
-        for overrides, expected in (({}, 117), ({"maaend-arm64-beta-delta": 42}, 42)):
-            with tempfile.TemporaryDirectory() as directory:
-                source = Path(directory) / "bundle.zip"
-                source.write_bytes(b"verified ZIP")
-                with (
-                    patch.dict(
-                        os.environ,
-                        {
-                            "AUTOMAS_FILE_IDS": json.dumps(
-                                {"maaend-x64-beta-delta": 116, **overrides}
-                            )
-                        },
-                    ),
-                    patch.object(publisher, "target", return_value=(url, "test-key")),
-                    patch.object(
-                        publisher, "matches", new=AsyncMock(side_effect=[False, True])
-                    ),
-                    patch.object(publisher, "upload") as upload,
-                    patch.object(publisher, "upload_chunks") as chunks,
-                    patch.object(
-                        httpx,
-                        "AsyncClient",
-                        side_effect=lambda **kw: original(
-                            **kw,
-                            transport=httpx.MockTransport(
-                                lambda _: httpx.Response(200, json={"data": record})
+        for key, default in (
+            ("maaend-arm64-beta-delta", 117),
+            ("maaend-x64-stable-delta", 124),
+            ("maaend-arm64-stable-delta", 125),
+        ):
+            url = URL.replace("maaend-x64-beta-delta", key)
+            record = {
+                "project_key": "maaend",
+                "category_key": "ReleaseOTA",
+                "file_key": key,
+            }
+            for overrides, expected in (({}, default), ({key: 42}, 42)):
+                with tempfile.TemporaryDirectory() as directory:
+                    source = Path(directory) / "bundle.zip"
+                    source.write_bytes(b"verified ZIP")
+                    with (
+                        patch.dict(
+                            os.environ,
+                            {
+                                "AUTOMAS_FILE_IDS": json.dumps(
+                                    {"maaend-x64-beta-delta": 116, **overrides}
+                                )
+                            },
+                        ),
+                        patch.object(
+                            publisher, "target", return_value=(url, "test-key")
+                        ),
+                        patch.object(
+                            publisher,
+                            "matches",
+                            new=AsyncMock(side_effect=[False, True]),
+                        ),
+                        patch.object(publisher, "upload") as upload,
+                        patch.object(publisher, "upload_chunks") as chunks,
+                        patch.object(
+                            httpx,
+                            "AsyncClient",
+                            side_effect=lambda **kw: original(
+                                **kw,
+                                transport=httpx.MockTransport(
+                                    lambda _: httpx.Response(200, json={"data": record})
+                                ),
                             ),
                         ),
-                    ),
-                ):
-                    await publisher.publish(source)
-                    chunks.assert_called_once_with(expected, "test-key", source)
-                    upload.assert_not_called()
+                    ):
+                        await publisher.publish(source)
+                        chunks.assert_called_once_with(expected, "test-key", source)
+                        upload.assert_not_called()
 
     async def test_wrong_public_category_prevents_any_upload(self):
         record = {

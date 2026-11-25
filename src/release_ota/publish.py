@@ -29,7 +29,12 @@ FILE_KEYS = frozenset(
     for channel in ("stable", "beta")
 )
 # 已由首次创建响应确认的本仓库文件；仓库变量可覆盖或补充。
-DEFAULT_FILE_IDS = {"maaend-x64-beta-delta": 116, "maaend-arm64-beta-delta": 117}
+DEFAULT_FILE_IDS = {
+    "maaend-x64-beta-delta": 116,
+    "maaend-arm64-beta-delta": 117,
+    "maaend-x64-stable-delta": 124,
+    "maaend-arm64-stable-delta": 125,
+}
 PUBLIC_PATHS = frozenset(
     f"/api/v1/files/maaend/ReleaseOTA/{key}/download" for key in FILE_KEYS
 )

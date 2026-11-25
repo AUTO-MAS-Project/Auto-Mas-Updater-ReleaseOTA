@@ -48,11 +48,11 @@ GitHub 定时任务可能排队延迟。检查附件上传状态、大小和官�
 发布器固定只接受 `maaend / ReleaseOTA` 下上述四个文件键，首次上传自动创建目标文件，
 后续通过公开元数据确认项目、分类、文件键后上传新版本。
 站点公开接口不提供数字 ID，首次创建会在日志及步骤摘要中输出 ID；
-将它保存到仓库变量 `MAAEND_RELEASEOTA_FILE_IDS` 的 JSON 映射，例如
-`{"maaend-x64-beta-delta":116,"maaend-arm64-beta-delta":117}`，后续新增通道时保留已有项并加入新项。
-发布器内置已由首次创建响应确认的 x64 beta 116、arm64 beta 117；变量可覆盖或补充，
-因此旧变量只有 x64 项时仍可更新 arm64 beta。正式通道首次创建后仍需保存返回的 ID。
-这些 ID 来自[首次四通道运行](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43651682245)。
+发布器已内置四个公开文件的 ID（按 x64、arm64 顺序）：
+[beta 首次创建记录](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/43651682245)为 116、117，
+[stable 首次创建记录](https://github.com/AUTO-MAS-Project/Auto-Mas-Updater-ReleaseOTA/actions/runs/44217782119)为 124、125。
+仓库变量 `MAAEND_RELEASEOTA_FILE_IDS` 可按文件键覆盖或补充默认值；
+例如旧配置 `{"maaend-x64-beta-delta":116}` 只指定 x64 beta，其余三项仍使用内置 ID。
 该变量只应由仓库维护者根据创建响应配置；服务端仍按访问密钥检查分类权限。
 密钥须限制为 MaaEnd 项目的 ReleaseOTA 分类；不会读取、创建或上传到其他分类。
 首次创建使用小于 32 KiB 的空计划 ZIP，通过 curl multipart 建立文件记录；这段时间客户端全量。
